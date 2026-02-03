@@ -74,6 +74,17 @@ main :: proc() {
 		config.inputs = slice.clone([]string{"."})
 	}
 
+	log.ensuref(
+		config.remove_function_prefix == "",
+		"Error in config %v: remove_function_prefix has been replaced with link_prefix",
+		config_filename,
+	)
+	log.ensuref(
+		config.procedures_at_end == false,
+		"Error in config %v: procedures_at_end has been replaced with foreign_at_end",
+		config_filename,
+	)
+
 	// The working dir of the program may not be the same as `dir`. Therefore, we add `dir` to any
 	// path that comes out of the config.
 	//

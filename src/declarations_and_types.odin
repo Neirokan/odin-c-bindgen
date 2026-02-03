@@ -61,6 +61,11 @@ Decl :: struct {
 
 	explicitly_created: bool,
 
+	is_var: bool,
+
+	// Used to keep procs and vars inside same foreign block.
+	block_calling_convention: Calling_Convention,
+
 	// Only used for macros.
 	explicit_whitespace_before_side_comment: int,
 
@@ -69,8 +74,8 @@ Decl :: struct {
 
 	// This declaration originates from a C macro.
 	//
-	// TODO: We currently have three "categories": types, procs and macros. Should this be enumified
-	// perhaps? The proc info comes from 'def' currently
+	// TODO: We currently have four "categories": types, procs, vars and macros. Should this be
+	// enumified perhaps? The proc info comes from 'def' currently
 	from_macro: bool,
 }
 

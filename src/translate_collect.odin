@@ -205,27 +205,15 @@ build_cursor_children_lookup :: proc(c: clang.Cursor, res: ^Cursor_Children_Map)
 // Also runs `create_type_recursive` which will fill out `tcs.types`.
 create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 	name := get_cursor_name(c)
+	loc := get_cursor_location(c)
 	comment_before := string_from_clang_string(clang.Cursor_getRawCommentText(c))
-	line := get_cursor_location(c).line
 
 	// When the cursor is actually defined somewhere else in the file. Used later to resolve
 	// forward declarations.
 	is_forward_declare := clang.isCursorDefinition(c) == 0
 
 	// Comments on the right side of the line aren't picked up by clang. So we extract them manually.
-	side_comment: string
-	side_comment_align_whitespace: int
-	{
-		source_range := clang.getCursorExtent(c)
-
-		start := clang.getRangeStart(source_range)
-		start_offset: u32
-		clang.getExpansionLocation(start, nil, nil, nil, &start_offset)
-		end := clang.getRangeEnd(source_range)
-		end_offset: u32
-		clang.getExpansionLocation(end, nil, nil, nil, &end_offset)
-		side_comment, side_comment_align_whitespace = find_comment_at_line_end(tcs.source[start_offset:])
-	}
+	side_comment, side_comment_align_whitespace := find_comment_at_line_end(tcs.source[loc.offset:])
 
 	ct := clang.getCursorType(c)
 
@@ -245,7 +233,7 @@ create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 				comment_before = comment_before,
 				def = ti,
 				name = name,
-				original_line = line,
+				original_line = loc.line,
 				side_comment = side_comment,
 				is_forward_declare = is_forward_declare,
 			})
@@ -269,7 +257,7 @@ create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 			comment_before = comment_before,
 			def = ti,
 			name = name,
-			original_line = line,
+			original_line = loc.line,
 			side_comment = side_comment,
 			is_forward_declare = is_forward_declare,
 		})
@@ -290,7 +278,7 @@ create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 					add_decl(tcs.decls, {
 						name = m.name,
 						def = Fixed_Value(fmt.tprint(m.value)),
-						original_line = line,
+						original_line = loc.line,
 
 						// It's not really from a macro, but it's probably best if it behaves as if.
 						from_macro = true,
@@ -304,7 +292,7 @@ create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 			comment_before = comment_before,
 			def = ti,
 			name = name,
-			original_line = line,
+			original_line = loc.line,
 			side_comment = side_comment,
 			is_forward_declare = is_forward_declare,
 		})
@@ -325,9 +313,43 @@ create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 			comment_before = comment_before,
 			def = ti,
 			name = name,
-			original_line = line,
+			original_line = loc.line,
 			side_comment = side_comment,
 			is_forward_declare = is_forward_declare,
+		})
+
+	case .VarDecl:
+		// Clang treats a tentative definition (non-external variable declaration without an
+		// initializer) as a forward declaration, but it's not one, and it's not helpful in
+		// this case.
+		is_forward_declare &= clang.Cursor_hasVarDeclExternalStorage(c) == 1
+
+		// Comments on the right side are actually picked up by clang, but only for variables
+		// and fields, so now we are manually extracting comment above the variable.
+		comment_before = find_comment_before(tcs.source, '\n', loc.offset)
+
+		ti: Definition
+		if unwrapped_type, is_proc := unwrap_proc_pointers(ct); is_proc {
+			ti = create_proc_type(tcs.children_lookup[c], unwrapped_type, tcs)
+		} else {
+			ti = create_variable_type(unwrapped_type, tcs)
+		}
+
+		if ti == TYPE_INDEX_NONE {
+			log.errorf("Unknown type: %v", ct)
+			return
+		}
+
+		// TODO: Maybe try to merge variables just like in structs?
+		// However, it will make emitting link_name for individual variables troublesome.
+		add_decl(tcs.decls, {
+			comment_before = comment_before,
+			def = ti,
+			name = name,
+			original_line = loc.line,
+			side_comment = side_comment,
+			is_forward_declare = is_forward_declare,
+			is_var = true,
 		})
 
 	case .MacroDefinition:
@@ -398,7 +420,7 @@ create_declaration :: proc(c: clang.Cursor, tcs: ^Translate_Collect_State) {
 				side_comment = side_comment,
 				whitespace_before_side_comment = side_comment_align_whitespace,
 				whitespace_after_name = whitespace_after_name,
-				original_line = line,
+				original_line = loc.line,
 			})
 		}
 	}
@@ -615,26 +637,39 @@ get_type_name_or_create_anon_type :: proc(ct: clang.Type, tcs: ^Translate_Collec
 	return create_type_recursive(ct, tcs)
 }
 
-is_fixed_array :: proc(ct: clang.Type) -> bool {
+underlying_type :: proc(ct: clang.Type) -> clang.Type {
 	ct := ct
 
 	if ct.kind == .Elaborated {
 		ct = clang.Type_getNamedType(ct)
 	}
 
-	if ct.kind == .ConstantArray {
-		return true
-	}
-
 	if ct.kind == .Typedef {
-		underlying := clang.getTypedefDeclUnderlyingType(clang.getTypeDeclaration(ct))
-
-		if underlying.kind == .ConstantArray {
-			return true
-		}
+		ct = clang.getTypedefDeclUnderlyingType(clang.getTypeDeclaration(ct))
 	}
 
-	return false
+	return ct
+}
+
+// As it happens with C, an incomplete array can mean multiple things depending on the context:
+// 1. For procedure argument, it's a pointer to an array: `[^]`
+// 2. For variable declaration and struct field, it's an array with unknown size: `[n]`, where n is unknown
+// 3. For variable definition, it's an array with 1 element: `[1]`
+// We can't reuse the same type definition for all cases. We don't need the third case for bindings.
+// The only "safe" definition for the second case is `[0]`, which shouldn't be used as often, as
+// the first case. That' why it's a special case handled by this proc instead of `create_proc_type`.
+create_variable_type :: proc(ct: clang.Type, tcs: ^Translate_Collect_State) -> Definition {
+	if underlying := underlying_type(ct); underlying.kind == .IncompleteArray {
+		elem_type_id := get_type_name_or_create_anon_type(clang.getArrayElementType(underlying), tcs)
+		array_id := Type_Index(len(tcs.types))
+		append_nothing(tcs.types)
+		tcs.types[array_id] = Type_Fixed_Array {
+			element_type = elem_type_id,
+			size = 0,
+		}
+		return array_id
+	}
+	return get_type_name_or_create_anon_type(ct, tcs)
 }
 
 // This is a separate proc because we call it both from create_type_recursive and from
@@ -677,7 +712,7 @@ create_proc_type :: proc(param_childs: []clang.Cursor, ct: clang.Type, tcs: ^Tra
 				// `float numbers[2]` as a function parameter is equivalent to `float *numbers`, but
 				// you have that `2` there for documentation purposes. So by default we turn such
 				// a parameter into `numbers: ^[2]f32`.
-				if is_fixed_array(param_type) {
+				if underlying_type(param_type).kind == .ConstantArray {
 					wrapper_idx := Type_Index(len(tcs.types))
 					append_nothing(tcs.types)
 					tcs.types[wrapper_idx] = Type_Pointer {
@@ -838,7 +873,7 @@ create_type_recursive :: proc(ct: clang.Type, tcs: ^Translate_Collect_State) -> 
 				if unwrapped_type, is_proc := unwrap_proc_pointers(sct); is_proc {
 					type_id = create_proc_type(tcs.children_lookup[sc], unwrapped_type, tcs)
 				} else {
-					type_id = get_type_name_or_create_anon_type(unwrapped_type, tcs)
+					type_id = create_variable_type(unwrapped_type, tcs)
 				}
 
 				name := get_cursor_name(sc)

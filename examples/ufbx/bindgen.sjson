@@ -5,7 +5,7 @@ inputs = [
 ]
 
 remove_type_prefix = "ufbx_"
-remove_function_prefix = "ufbx_"
+link_prefix = "ufbx_"
 remove_macro_prefix = "UFBX_"
 import_lib = "ufbx.lib"
 package_name = "ufbx"
@@ -59,4 +59,4 @@ remove_macros = [
     "UFBX_NO_INDEX"
 ]
 
-procedures_at_end = true
+foreign_at_end = true

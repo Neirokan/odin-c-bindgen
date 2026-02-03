@@ -43,6 +43,8 @@ translate_process :: proc(tcr: Translate_Collect_Result, config: Config, types: 
 			}
 
 			forward_declare_resolved[d.name] = false
+		} else if d.is_var {
+			d.invalid = true
 		}
 	}
 
@@ -59,6 +61,10 @@ translate_process :: proc(tcr: Translate_Collect_Result, config: Config, types: 
 
 	// Replace types
 	for &d in decls {
+		if d.is_var {
+			continue
+		}
+
 		override: bool
 		override_definition_text: string
 
@@ -119,6 +125,15 @@ translate_process :: proc(tcr: Translate_Collect_Result, config: Config, types: 
 		if d.def == nil {
 			d.invalid = true
 			log.errorf("Type used in declaration %v is zero", d.name)
+			continue
+		}
+
+		if override, has_override := config.variable_overrides[d.name]; has_override && d.is_var {
+			if new_type, ok := augment_pointers(d.def, types, override); ok {
+				d.def = new_type
+			} else {
+				d.def = Fixed_Value(override)
+			}
 			continue
 		}
 
@@ -280,15 +295,17 @@ translate_process :: proc(tcr: Translate_Collect_Result, config: Config, types: 
 		top_code = fmt.tprintf("foreign import lib \"%v\"\n_ :: lib", config.import_lib)
 	}
 
-	if config.procedures_at_end {
+	if config.foreign_at_end {
 		context.user_ptr = types
 		slice.sort_by(decls[:], proc(i, j: Decl) -> bool {
 			types := (Type_List)(context.user_ptr)
 			_, i_is_proc := resolve_type_definition(types, i.def, Type_Procedure)
 			_, j_is_proc := resolve_type_definition(types, j.def, Type_Procedure)
+			i_is_foreign := i_is_proc || i.is_var
+			j_is_foreign := j_is_proc || j.is_var
 
-			if i_is_proc != j_is_proc {
-				return j_is_proc
+			if i_is_foreign != j_is_foreign {
+				return j_is_foreign
 			}
 
 			return i.original_line < j.original_line
@@ -299,13 +316,25 @@ translate_process :: proc(tcr: Translate_Collect_Result, config: Config, types: 
 		})
 	}
 
+	// This pass assumes that variables are preceding related functions
+	block_convention: Calling_Convention
+	#reverse for &d in decls {
+		if d.invalid {
+			continue
+		}
+		if proc_type, is_proc := resolve_type_definition(types, d.def, Type_Procedure); is_proc && !d.is_var {
+			block_convention = proc_type.calling_convention
+		}
+		d.block_calling_convention = block_convention
+	}
+
 	// Run this last! Otherwise mapping that assumes things has their original names may fail.
 	resolve_final_names(types, decls, config)
 
 	return {
 		top_comment = extract_top_comment(tcr.source),
 		top_code = top_code,
-		link_prefix = config.remove_function_prefix,
+		link_prefix = config.link_prefix,
 		extra_imports = tcr.extra_imports,
 	}
 }
@@ -737,8 +766,8 @@ final_decl_name :: proc(d: Decl, types: Type_List, config: Config) -> string {
 
 	_, is_proc := resolve_type_definition(types, d.def, Type_Procedure)
 
-	if is_proc {
-		return strings.trim_prefix(d.name, config.remove_function_prefix)
+	if is_proc || d.is_var {
+		return strings.trim_prefix(d.name, config.link_prefix)
 	} else if d.from_macro {
 		return strings.trim_prefix(d.name, config.remove_macro_prefix)
 	} else {

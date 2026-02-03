@@ -49,14 +49,15 @@ inputs = [
 // Output folder. In there you'll find one .odin file per processed header.
 output_folder = "my_lib"
 
+// Remove this prefix from function and variable names and add it as link_prefix to the foreign
+// group.
+link_prefix = ""
+
 // Remove this prefix from types names (structs, enums, etc)
 remove_type_prefix = ""
 
 // Remove this prefix from macro names
 remove_macro_prefix = ""
-
-// Remove this prefix from function names (and add it as link_prefix) to the foreign group
-remove_function_prefix = ""
 
 // Remove this suffix from type names (such as '_t' etc)
 remove_type_suffix = ""
@@ -141,13 +142,21 @@ procedure_parameter_defaults = {
 	// "Some_Struct.a_field_that_is_a_proc.some_parameter" = "5"
 }
 
+// Override the type of a global variable.
+//
+// You can also use `[^]` to augment an already existing type.
+variable_overrides = {
+    // "lib_version" = "cstring"
+    // "lib_search_directories" = "[^]"
+}
+
 // Put the names of declarations in here to remove them.
 remove = [
 	// "Some_Declaration_Name"
 ]
 
-// Group all procedures at the end of the file.
-procedures_at_end = false
+// Group all foreign blocks (procedures and variables) at the end of the file.
+foreign_at_end = false
 
 // Additional include paths to send into clang. While generating the bindings clang will look into
 // this path in search for included headers.

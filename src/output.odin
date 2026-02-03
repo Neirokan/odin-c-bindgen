@@ -42,6 +42,7 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 		Default,
 		Macro,
 		Proc,
+		Var,
 	}
 
 	Output_Group_Decl :: struct {
@@ -54,6 +55,7 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 		kind: Output_Group_Kind,
 		start_foreign_block: bool,
 		end_foreign_block: bool,
+		multiline: bool,
 		proc_calling_convention: Calling_Convention,
 	}
 
@@ -70,7 +72,9 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 
 		proc_type, is_proc := resolve_type_definition(types, d.def, Type_Procedure)
 
-		if is_proc {
+		if d.is_var {
+			kind = .Var
+		} else if is_proc {
 			kind = .Proc
 		} else if d.from_macro {
 			kind = .Macro
@@ -81,7 +85,7 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 		if kind == .Proc {
 			output_procedure_signature(types, proc_type, &rhs_builder, 1, false)
 		} else {
-			output_definition(types, d.def, &rhs_builder, 0)
+			output_definition(types, d.def, &rhs_builder, kind == .Var ? 1 : 0)
 		}
 
 		rhs := strings.to_string(rhs_builder)
@@ -95,32 +99,28 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 		// This check is a bit complicated. It breaks things into separate groups depending on if
 		// the group kind changes, if the proc calling convention changes etc.
 		if kind != current_group.kind ||
-			(kind == .Proc && current_group.proc_calling_convention != proc_type.calling_convention) ||
+			(current_group.proc_calling_convention != d.block_calling_convention) ||
 			d.comment_before != "" ||
-			multiline {
-			current_group.end_foreign_block = current_group.kind == .Proc && (kind != .Proc ||
-				proc_type.calling_convention != current_group.proc_calling_convention)
+			multiline || current_group.multiline {
+			prev_inside_block := current_group.end_foreign_block
+			inside_block := kind == .Var || kind == .Proc
+			change_block := d.block_calling_convention != current_group.proc_calling_convention
+
+			current_group.end_foreign_block = prev_inside_block && (!inside_block || change_block)
 			output_group(current_group, o, sb)
 			clear(&current_group.decls)
-			prev_kind := current_group.kind
-			prev_proc_calling_conventation := current_group.proc_calling_convention
-			current_group.kind = kind
-			current_group.start_foreign_block = kind == .Proc && (prev_kind != .Proc ||
-				proc_type.calling_convention != prev_proc_calling_conventation)
-			current_group.end_foreign_block = kind == .Proc
 
-			current_group.proc_calling_convention = kind == .Proc ? proc_type.calling_convention : {}
+			current_group.kind = kind
+			current_group.start_foreign_block = inside_block && (!prev_inside_block || change_block)
+			current_group.end_foreign_block = inside_block
+			current_group.multiline = multiline
+			current_group.proc_calling_convention = d.block_calling_convention
 		}
 
 		append(&current_group.decls, Output_Group_Decl {
 			decl = d,
 			rhs = rhs,
 		})
-
-		if multiline {
-			output_group(current_group, o, sb)
-			clear(&current_group.decls)
-		}
 	}
 
 	output_group(current_group, o, sb)
@@ -163,7 +163,11 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 
 			tb := strings.builder_make()
 
-			pf(&tb, "%v%*s:: %v", d.name, max(longest_name-len(d.name) + 1, d.explicit_whitespace_after_name), "", rhs)
+			if k == .Var {
+				pf(&tb, "%v:%*s %v", d.name, max(longest_name-len(d.name), d.explicit_whitespace_after_name), "", rhs)
+			} else {
+				pf(&tb, "%v%*s:: %v", d.name, max(longest_name-len(d.name) + 1, d.explicit_whitespace_after_name), "", rhs)
+			}
 
 			if k == .Proc {
 				pf(&tb, " ---")
@@ -180,7 +184,7 @@ output :: proc(types: Type_List, decls: Decl_List, o: Output_Input, filename: st
 		for &od, i in g.decls {
 			d := od.decl
 
-			indent := k == .Proc ? 1 : 0
+			indent := k == .Proc || k == .Var ? 1 : 0
 
 			if d.comment_before != "" {
 				cb := d.comment_before

@@ -211,7 +211,7 @@ procedure_type_overrides = {
 	"LoadMusicStreamFromMemory.data" = "rawptr"
 }
 
-procedures_at_end = true
+foreign_at_end = true
 
 remove = [
 	"MemFree",

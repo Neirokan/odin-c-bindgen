@@ -5214,6 +5214,28 @@ DeformPercent :: "DeformPercent"
 
 @(default_calling_convention="c", link_prefix="ufbx_")
 foreign lib {
+	// Various zero/empty/identity values
+	empty_string:       String
+	empty_blob:         Blob
+	identity_matrix:    Matrix
+	identity_transform: Transform
+	zero_vec2:          Vec2
+	zero_vec3:          Vec3
+	zero_vec4:          Vec4
+	identity_quat:      Quat
+
+	// Commonly used coordinate axes.
+	axes_right_handed_y_up: Coordinate_Axes
+	axes_right_handed_z_up: Coordinate_Axes
+	axes_left_handed_y_up:  Coordinate_Axes
+	axes_left_handed_z_up:  Coordinate_Axes
+
+	// Sizes of element types. eg `sizeof(ufbx_node)`
+	element_type_size: [42]c.size_t
+
+	// Version of the source file, comparable to `UFBX_HEADER_VERSION`
+	source_version: u32
+
 	// Practically always `true` (see below), if not you need to be careful with threads.
 	//
 	// Guaranteed to be `true` in _any_ of the following conditions:

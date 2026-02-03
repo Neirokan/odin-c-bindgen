@@ -11,13 +11,17 @@ Config :: struct {
 	// Output folder. In there you'll find one .odin file per processed header.
 	output_folder: string,
 
+	// Remove this prefix from function and variable names and add it as link_prefix to the foreign
+	// group.
+	link_prefix: string,
+
 	// Remove this prefix from types names (structs, enums, etc)
 	remove_type_prefix: string,
 
 	// Remove this prefix from macro names
 	remove_macro_prefix: string,
 
-	// Remove this prefix from function names (and add it as link_prefix) to the foreign group
+	// deprecated: use link_prefix
 	remove_function_prefix: string,
 
 	// Remove this suffix from type names (structs, enum, etc)
@@ -80,10 +84,18 @@ Config :: struct {
 	// `Struct_Name.proc_field.parameter_name`
 	procedure_parameter_defaults: map[string]string,
 
+	// Override the type of a global variable.
+	//
+	// You can also use `[^]` to augment an already existing type.
+	variable_overrides: map[string]string,
+
 	// Put the names of declarations in here to remove them.	
 	remove: []string,
 
-	// Group all procedures at the end of the file.
+	// Group all foreign blocks (procedures and variables) at the end of the file.
+	foreign_at_end: bool,
+
+	// deprecated: use foreign_at_end
 	procedures_at_end: bool,
 	
 	// Additional include paths to send into clang. While generating the bindings clang will look into
